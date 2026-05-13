@@ -30,6 +30,164 @@ class EleicaoViewSet(viewsets.ModelViewSet):
     search_fields = ['titulo']
     ordering_fields = ['data_inicio', 'data_fim', 'titulo']
     ordering = ['-data_inicio']
+
+    @action(detail=True, methods=['post'])
+    def abertura(self, request, pk=None):
+        eleicao = self.get_object()
+        
+        if eleicao.status != 'rascunho':
+            return Response(
+                {
+                    "detail": "Esta eleição não pode ser aberta, pois seu status não é rascunho."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        if eleicao.candidatos.count() < 2:
+            return Response(
+                {
+                    "detail": "A eleição deve ter pelo menos 2 candidatos."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+                )
+            
+        if eleicao.aptos.count() < 1: # [cite: 214]
+            return Response(
+                {
+                    "detail": "A eleição deve ter pelo menos 1 eleitor apto."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        eleicao.status = 'aberta'
+        eleicao.save()
+        
+        serializer = self.get_serializer(eleicao)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def encerramento(self, request, pk=None):
+        eleicao = self.get_object()
+        
+        if eleicao.status != 'aberta':
+            return Response(
+                {
+                    "detail": "Apenas eleições abertas podem ser encerradas."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        eleicao.status = 'encerrada'
+        eleicao.save()
+        return Response(
+            {
+                "mensagem": "Eleição encerrada com sucesso."
+            }
+            )
+
+    @action(detail=True, methods=['get'])
+    def apuracao(self, request, pk=None):
+        eleicao = self.get_object()
+        
+        if eleicao.status not in ['encerrada', 'apurada']:
+            return Response(
+                {
+                    "detail": "Apuração permitida apenas para eleições encerradas ou apuradas."
+                },
+                status=status.HTTP_403_FORBIDDEN
+                )
+
+        total_aptos = eleicao.aptos.count() 
+        total_votantes = eleicao.registros_votacao.count()
+        total_abstencoes = total_aptos - total_votantes
+        
+        votos_validos = Voto.objects.filter(eleicao=eleicao, em_branco=False).count()
+        votos_brancos = Voto.objects.filter(eleicao=eleicao, em_branco=True).count()
+        
+        resultados = []
+        candidatos = eleicao.candidatos.all()
+        for cand in candidatos:
+            votos_cand = Voto.objects.filter(candidato=cand).count()
+            percentual = (votos_cand / votos_validos * 100) if votos_validos > 0 else 0
+            resultados.append({
+                "candidato": cand.nome_urna,
+                "numero": cand.numero,
+                "votos": votos_cand,
+                "percentual": round(percentual, 2)
+            })
+        
+        resultados.sort(key=lambda x: x['votos'], reverse=True)
+        max_votos = resultados[0]['votos'] if resultados else 0
+        vencedores = [r['candidato'] for r in resultados if r['votos'] == max_votos and max_votos > 0]
+        
+        
+        if eleicao.status == 'encerrada':
+            eleicao.status = 'apurada'
+            eleicao.save()
+
+        return Response({
+            "eleicao": eleicao.titulo,
+            "total_aptos": total_aptos,
+            "total_votantes": total_votantes,
+            "total_abstencoes": total_abstencoes,
+            "votos_validos": votos_validos,
+            "votos_brancos": votos_brancos,
+            "resultado": resultados,
+            "vencedores": vencedores,
+            "houve_empate": len(vencedores) > 1
+        })
+
+    @action(detail=True, methods=['get'])
+    def votantes(self, request, pk=None):
+        eleicao = self.get_object()
+        compareceu_param = request.query_params.get('compareceu', 'true').lower() == 'true'
+        
+        if compareceu_param:
+            registros = RegistroVotacao.objects.filter(eleicao=eleicao).select_related('eleitor')
+            dados = [
+                {
+                    "nome": r.eleitor.nome,
+                    "cpf": f"***.{r.eleitor.cpf[4:11]}-**",
+                    "data_hora": r.data_hora
+                }
+                for r in registros
+            ]
+        else:
+            votantes_ids = RegistroVotacao.objects.filter(eleicao=eleicao).values_list('eleitor_id', flat=True)
+            abstencoes = AptidaoEleitor.objects.filter(eleicao=eleicao).exclude(eleitor_id__in=votantes_ids).select_related('eleitor')
+            dados = [
+                {
+                "nome": a.eleitor.nome,
+                "cpf": f"***.{a.eleitor.cpf[4:11]}-**"
+                }
+                for a in abstencoes
+            ]
+
+        return Response(dados)
+
+    @action(detail=True, methods=['post'], url_path='cadastro-aptos')
+    def cadastro_aptos(self, request, pk=None):
+        eleicao = self.get_object()
+        
+        if eleicao.status != 'rascunho':
+            return Response(
+                {
+                    "detail": "Cadastro de aptos permitido apenas em rascunho."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        eleitores_ids = request.data.get('eleitores_ids', [])
+        cadastrados = 0
+        
+        with transaction.atomic():
+            for eid in eleitores_ids:
+                eleitor = Eleitor.objects.get(id=eid)
+                if not AptidaoEleitor.objects.filter(eleicao=eleicao, eleitor=eleitor).exists():
+                    AptidaoEleitor.objects.create(eleicao=eleicao, eleitor=eleitor)
+                    cadastrados += 1
+                    
+        return Response({"total_cadastrados": cadastrados}, status=status.HTTP_201_CREATED)
     
     @action(detail=True, methods=['post'])
     def voto(self, request, pk=None):
