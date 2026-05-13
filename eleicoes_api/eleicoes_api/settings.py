@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'psycopg2',
+    'django_filters',
     'drf_yasg',
     'urna'
 ]
