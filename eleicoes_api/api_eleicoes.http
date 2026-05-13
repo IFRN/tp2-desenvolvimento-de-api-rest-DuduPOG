@@ -1,0 +1,139 @@
+@baseUrl = http://localhost:8000/eleicoes_api
+@tokenValido = 8N4q0aPxRz_KbS3vF7Tg9hYmJpL2WdRcXeUiHkZoVj0
+
+@tokenInvalido = qualquercoisa
+
+### 1. Criar Eleitor
+POST {{baseUrl}}/eleitores/
+Content-Type: application/json
+
+{
+    "nome": "João Silva",
+    "email": "joao@email.com",
+    "cpf": "123.456.789-00",
+    "data_nascimento": "1990-01-01"
+}
+
+### 2. Criar Eleição (Rascunho)
+POST {{baseUrl}}/eleicoes/
+Content-Type: application/json
+
+{
+    "titulo": "Eleição DA 2026",
+    "descricao": "Votação para o Diretório Acadêmico",
+    "tipo": "estudantil",
+    "data_inicio": "2026-05-13T08:00:00Z",
+    "data_fim": "2026-05-13T18:00:00Z",
+    "criada_por": 1
+}
+
+### 3. Criar Candidatos (Mínimo 2)
+POST {{baseUrl}}/candidatos/
+Content-Type: application/json
+
+{
+    "eleicao": 1,
+    "numero": 13,
+    "nome": "Ana Souza",
+    "nome_urna": "ANA"
+}
+
+### 4. Cadastrar Aptos em Lote
+POST {{baseUrl}}/eleicoes/1/cadastro-aptos/
+Content-Type: application/json
+
+{
+    "eleitores_ids": [1, 2, 3, 4, 5]
+}
+
+### 5. Tentar Abrir Eleição sem Candidatos (Erro 400)
+POST {{baseUrl}}/eleicoes/2/abertura/
+
+### 6. Abrir Eleição Válida (Status -> Aberta)
+POST {{baseUrl}}/eleicoes/1/abertura/
+
+### 7. Registrar Voto Válido (Candidato)
+POST {{baseUrl}}/eleicoes/1/voto/
+Content-Type: application/json
+
+{
+    "eleitor_id": 1,
+    "candidato_id": 1
+}
+
+### 8. Votar Duas Vezes (Erro 409)
+POST {{baseUrl}}/eleicoes/1/voto/
+Content-Type: application/json
+
+{
+    "eleitor_id": 1,
+    "candidato_id": 1
+}
+
+### 10. Voto em Branco
+POST {{baseUrl}}/eleicoes/1/voto/
+Content-Type: application/json
+
+{
+    "eleitor_id": 2,
+    "em_branco": true
+}
+
+### 11. Verificar Comprovante
+GET {{baseUrl}}/verificacao-comprovante/?token={{tokenValido}}
+
+### 12. Verificar comprovante inválido
+# Esperado: HTTP 404 Not Found
+GET {{baseUrl}}/verificar-comprovante/?token={{tokenInvalido}}
+
+---
+
+### 13. Baixar QR Code (PNG)
+# Esperado: HTTP 200 com content_type image/png
+GET {{baseUrl}}/comprovantes/qr/?token={{tokenValido}}
+
+---
+
+### 14. Encerrar eleição
+# Esperado: HTTP 200 e alteração do status para 'encerrada'
+POST {{baseUrl}}/eleicoes/1/encerramento/
+Content-Type: application/json
+
+{}
+
+---
+
+### 15. Votar após encerramento
+# Esperado: HTTP 400 Bad Request (eleição não está aberta)
+POST {{baseUrl}}/eleicoes/1/voto/
+Content-Type: application/json
+
+{
+    "eleitor_id": 3,
+    "candidato_id": 2
+}
+
+---
+
+### 16. Apurar eleição
+# Esperado: HTTP 200 - JSON com percentuais, vencedores e totalizadores
+GET {{baseUrl}}/eleicoes/1/apuracao/
+
+---
+
+### 17. Listar votantes
+# Esperado: HTTP 200 - Lista de quem compareceu (sem revelar os votos)
+GET {{baseUrl}}/eleicoes/1/votantes/
+
+---
+
+### 18. Tentar POST direto em /votos/
+# Esperado: HTTP 405 Method Not Allowed (VotoViewSet é ReadOnly) 
+POST {{baseUrl}}/votos/
+Content-Type: application/json
+
+{
+    "eleicao": 1,
+    "candidato": 1,
+    "em_branco": false
+}
